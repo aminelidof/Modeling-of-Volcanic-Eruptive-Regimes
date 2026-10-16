@@ -1,74 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-================================================================================
-magma_reel.py — PINN pour la rhéologie magmatique non-newtonienne (v7)
-Du banc d'essai de Poiseuille (Herschel-Bulkley) à la chambre magmatique de l'Etna
-================================================================================
-Framework  : PyTorch natif (Physics-Informed Neural Network, from scratch)
-Niveau     : Publication scientifique (JFM / GRL)
-
-HISTORIQUE DES CORRECTIFS :
-  v3 : [FIX-1..7]  BC dure, clipping Adam uniquement, multi-passes L-BFGS,
-       rhéologie basalte recalibrée, diagnostics régionaux, RMSE/MAE + QC.
-       -> Étape 2 VALIDÉE (clamp chambre 0.00 %, mu_noyau ~7e3 Pa.s, EFFUSIF).
-  v4 : [FIX-8..10] résidu en forme contrainte tau(y) = -G·y, float64,
-       auto-test de formulation, vérification AMONT du facteur Arrhenius.
-       -> auto-test 2.5e-15 (formulation PROVÉE) ; loss 6.475e-4 stable sur
-          2 passes L-BFGS float64 => minimum LOCAL, pas un plancher numérique.
-  v5 : [FIX-11/12] m_reg assoupli (5e2), auto-poids de collocation EMA.
-       -> R² INVARIANT (0.242 -> 0.253) : ni formulation, ni précision,
-          ni pondération.
-  v6 : [FIX-13] homotopie sur tau0 (continuation).
-       -> Run v6 : homotopie séquencée mais pertes de paliers CROISSANTES
-          (2.2e-6 -> 1.26e-3), R² = 0.277. FORENSIQUE DÉCISIVE (run v6) :
-          - RMSE 27.9 ≈ sqrt(y_c/H)·u_max = 29.0 et L2 0.404 ≈ 0.373 :
-            signature d'un profil EXACT en zone cisailée mais EFFONDRE à
-            u ~ 0 dans le plug (erreur max 91.7 ≈ u_max = 94.6) ;
-          - y_c = 0.094015 tombe ENTRE deux points de collocation
-            (0.090 / 0.095, pas 0.005) : le saut 0 -> u_max est invisible
-            à la perte ;
-          - de plus, la loi régularisée donne tau -> 0 quand gd -> 0 : la
-            perte est quasi AVEUGLE à la CONSTANTE du plug (seule sa
-            dérivée est contrainte) ; la moyenne quadratique du résidu
-            résiduel du plug ne vaut que y_c³/(3H²) ≈ 2.8e-4.
-          => quatre hypothèses éliminées ; le verrou est l'ÉCHANTILLONNAGE
-             de la jonction.
-  v7 — [FIX-14] COLLOCATION RAFFINÉE À L'INTERFACE ±y_c :
-           - grille de base (401 pts) + 2 grappes de 150 pts dans une
-             fenêtre de ±20 mm autour de ±y_c (résolution x27 à la
-             jonction) ;
-           - y_c = mu_ratio·tau0/G est issu des PARAMÈTRES D'ENTRÉE, pas
-             de la solution -> le benchmark reste AVEUGLE ;
-           - le saut devient coûteux : la zone cisailée étant déjà
-             exacte, l'unique façon d'annuler le résidu de jonction est
-             de relever l'intérieur du plug -> solution régularisée exacte ;
-       + SONDE de diagnostic (u_pred(0), saut max inter-échantillons) :
-         prédictions falsifiables avant/après ;
-       + continuation (homotopie) désactivée par défaut — le raffinement
-         d'interface rend la continuation superflue (flag conservé A/B).
-
-ÉTAPE 1 — Validation (Poiseuille plan, HB + Papanastasiou)
-    tau(y) = -G·y exact ; u(±H) = 0 (dure) ; float64 ; auto-test de
-    formulation ; collocation raffinée ±y_c + auto-poids -> L-BFGS-B ;
-    métriques L2, R², RMSE, MAE, erreur max ; sonde du plug.
-ÉTAPE 2 — Etna : Navier-Stokes Boussinesq 2D + continuité + énergie + Arrhenius
-    mu_eff = clamp_log( mu_HB(gd)·exp[(Ea/R)(1/T - 1/T_ref)], [1e1, 1e6] ) ;
-    paramètres Arrhenius bornés ; balancer de pertes par normes de gradient ;
-    diagnostics régionaux du clamping ; rapport éruptif (console + JSON) ;
-    figure 2x2 600 DPI.
-
-Fichiers générés
-----------------
-    train_log_step1.csv / train_log_step2.csv
-    step1_poiseuille_validation.{png,pdf}   (3 panneaux)
-    step2_etna_simulation.{png,pdf}         (600 DPI)
-    step2_loss_convergence.{png,pdf}
-    etna_simulation_results.csv
-    eruptive_decision.json
-================================================================================
-"""
-
 from __future__ import annotations
 
 import json
@@ -88,75 +17,52 @@ from matplotlib.colors import LogNorm
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
-# ==============================================================================
-# CONFIGURATION GLOBALE ET BORNES PHYSIQUES STRICTES
-# ==============================================================================
-
 CONFIG: Dict = {
     "seed": 42,
-    "learn_arrhenius": False,     # True -> inversion (mu0, Ea) par bornes dures
-    "grad_clip_norm": 1.0,        # [FIX-2] clipping Adam uniquement (pas L-BFGS)
-    "T_floor_kelvin": 600.0,      # [FIX-7] validité du domaine ; 900.0 = variante
-                                  #         pétrologique explicite (Hess & Dingwell)
+    "learn_arrhenius": False,     
+    "grad_clip_norm": 1.0,      
+    "T_floor_kelvin": 600.0, 
+                               
     "step1": {"adam_epochs": 6000, "adam_lr": 5.0e-4,
               "lbfgs_epochs": 500, "lbfgs_passes": 3,
-              "n_colloc": 401,                             # base ; +2x150 à ±y_c
+              "n_colloc": 401,                           
               "residual_mode": "stress",
               "float64": True,
-              "m_reg": 5.0e2,                              # [FIX-11]
-              "continuation": False},                      # [FIX-14] OFF par défaut
-                                                           # (True = A/B homotopie)
+              "m_reg": 5.0e2,                            
+              "continuation": False},                   
+                                                          
     "step2": {"adam_epochs": 4000, "adam_lr": 1.0e-3,
               "lbfgs_epochs": 300, "lbfgs_passes": 1,
               "n_domain": 2000, "n_per_edge": 120, "n_insar": 80, "n_petro": 400},
 }
 
-# --- Borne physique stricte sur la viscosité effective (clamp log) ---
-MU_PHYS_MIN = 1.0e1                       # Pa.s
-MU_PHYS_MAX = 1.0e6                       # Pa.s
+MU_PHYS_MIN = 1.0e1                     
+MU_PHYS_MAX = 1.0e6                      
 LN_MU_MIN = float(np.log(MU_PHYS_MIN))
 LN_MU_MAX = float(np.log(MU_PHYS_MAX))
 
-# --- Bornes physiques des paramètres d'Arrhenius (clip strict) ---
-MU0_BOUNDS = (10.0, 1.0e4)                # Pa.s
-EA_BOUNDS = (5.0e4, 3.5e5)                # J/mol
+MU0_BOUNDS = (10.0, 1.0e4)              
+EA_BOUNDS = (5.0e4, 3.5e5)               
 
 
 def _safe_log_bounds(v: np.ndarray, floor: float = 1e-12) -> Tuple[float, float]:
-    """Bornes (vmin, vmax) strictement positives pour une LogNorm robuste."""
+
     vmin = float(max(np.min(v), floor))
     vmax = float(np.max(v))
     if vmax <= vmin:
         vmax = vmin * 10.0
     return vmin, vmax
-
-
 class PhysicalConstants:
-    """Constantes physiques — basalte alcalin étnéen (INGV / laboratoire)."""
-    R_GAS: float = 8.314462618            # J/(mol.K)
-    RHO_MAGMA: float = 2700.0             # kg/m^3
-    CP_MAGMA: float = 1200.0              # J/(kg.K)
-    K_THERMAL: float = 2.5                # W/(m.K)
-    G_GRAVITY: float = 9.81               # m/s^2
-    ALPHA_THERMAL: float = 3.0e-5         # 1/K (Boussinesq)
-    T_REF_ARRHENIUS: float = 1373.0       # K (~1100 degC)
 
-
-# ==============================================================================
-# SECTION 0 : MODÈLES RHÉOLOGIQUES ET OUTILS
-# ==============================================================================
+    R_GAS: float = 8.314462618           
+    RHO_MAGMA: float = 2700.0          
+    CP_MAGMA: float = 1200.0           
+    K_THERMAL: float = 2.5              
+    G_GRAVITY: float = 9.81               
+    ALPHA_THERMAL: float = 3.0e-5         
+    T_REF_ARRHENIUS: float = 1373.0      
 
 class HerschelBulkleyPapanastasiou:
-    r"""
-    Fluide de Herschel-Bulkley régularisé (Papanastasiou, 1987) :
-        tau(gd) = tau0 [1 - exp(-m gd)] + K gd^n
-        mu_eff  = tau0 [1 - exp(-m gd)]/gd + K gd^(n-1)
-    Plateau à faible cisaillement : mu -> tau0 * m ; tau -> 0 quand gd -> 0
-    (propriété clé de la forensique v6/v7 : la perte est quasi aveugle à la
-    constante du plug, seule sa dérivée est contrainte).
-    NB : y_c = tau0/G est INDÉPENDANT de m ; tau0 = 0 -> loi puissance pure.
-    """
     def __init__(self, tau0: float, K: float, n: float, m_reg: float):
         self.tau0 = float(tau0)
         self.K = float(K)
@@ -172,14 +78,7 @@ class HerschelBulkleyPapanastasiou:
         return (self.tau0 * (1.0 - torch.exp(-self.m_reg * gd)) / gd
                 + self.K * gd ** (self.n - 1.0))
 
-
 class ArrheniusViscosity:
-    r"""
-    Loi d'Arrhenius NORMALISÉE (stable) :
-        mu_rel(T) = exp[ (Ea/R)(1/T - 1/T_ref) ],  mu_rel(T_ref) = 1.
-    Exposant borné à ±20 AVANT exp ; mu0 et Ea strictement bornés (clip).
-    [FIX-7] Plancher thermique paramétrable (600 K / 900 K variante).
-    """
     def __init__(self, mu0: float, Ea: float, T_ref: float,
                  T_min: float = 600.0, T_max: float = 2200.0):
         mu0_c = float(np.clip(mu0, *MU0_BOUNDS))
@@ -204,13 +103,8 @@ class ArrheniusViscosity:
         expo = (self.Ea / PhysicalConstants.R_GAS) * (1.0 / T_safe - 1.0 / self.T_ref)
         return np.exp(np.clip(expo, -20.0, 20.0))
 
-
 class ConstrainedArrheniusParameters(nn.Module):
-    r"""
-    Paramètres d'Arrhenius APPRENTISSABLES (reparamétrisation sigmoïde) :
-        mu0, Ea restent STRICTEMENT dans leurs bornes pendant toute
-        l'optimisation, y compris pendant les recherches de ligne L-BFGS.
-    """
+
     def __init__(self, mu0_init: float, Ea_init: float):
         super().__init__()
 
@@ -230,13 +124,7 @@ class ConstrainedArrheniusParameters(nn.Module):
 
 
 class AdaptiveLossBalancer:
-    """
-    Équilibrage des pertes par normes de gradient (Wang, Teng & Perdikaris,
-    JCP 2021) — Étape 2 (GLOBAL entre pertes). Poids bornés, updates
-    périodiques après warm-up, FIGÉS pendant L-BFGS.
-    (Étape 1, l'équivalent LOCAL entre points de collocation est
-    implémenté dans PoiseuillePINN.point_w — [FIX-12].)
-    """
+
     def __init__(self, keys: List[str], beta: float = 0.9, update_every: int = 100,
                  warmup: int = 500, w_min: float = 1e-2, w_max: float = 1e3):
         self.keys = list(keys)
@@ -269,7 +157,7 @@ class AdaptiveLossBalancer:
 
 
 class FullyConnectedNN(nn.Module):
-    """Réseau entièrement connecté (tanh/swish), initialisation Glorot."""
+
     def __init__(self, layers: List[int], activation: str = "tanh"):
         super().__init__()
         self.linears = nn.ModuleList()
@@ -292,7 +180,7 @@ class FullyConnectedNN(nn.Module):
 
 
 class CSVLogger:
-    """Journal d'entraînement exporté en CSV."""
+
     def __init__(self, filepath: str):
         self.filepath = filepath
         self.history: List[Dict[str, float]] = []
@@ -307,24 +195,8 @@ class CSVLogger:
                                           float_format="%.8e")
         print(f"[INFO] Log d'entraînement sauvegardé : {self.filepath}")
 
-
-# ==============================================================================
-# ÉTAPE 1 : VALIDATION RIGOUREUSE — POISEUILLE PLAN HERSCHEL-BULKLEY
-# ==============================================================================
-
 class PoiseuilleAnalytical:
-    r"""
-    Solution exacte (canal plan, -H <= y <= H, gradient -dp/dx = G) :
-        noyau rigide : |y| <= yc = tau0_eff / G          (indép. de m)
-        zone fluide  : u = (n/(n+1)) (G/K_eff)^(1/n)
-                             [ (H-yc)^((n+1)/n) - (|y|-yc)^((n+1)/n) ]
-    avec tau0_eff = mu_ratio tau0, K_eff = mu_ratio K (facteur Arrhenius
-    isotherme) -> cohérence EXACTE avec la loi constitutive du PINN.
-    Construite sur la CIBLE FINALE. y_c dépend UNIQUEMENT des paramètres
-    d'entrée (tau0, G, mu_ratio) — propriété exploitée par [FIX-14] sans
-    compromettre l'aveuglement du benchmark.
-    Référence : Bird, Stewart & Lightfoot (2002), Chap. 8.
-    """
+
     def __init__(self, H: float, G: float, tau0: float, K: float, n: float,
                  mu_ratio: float = 1.0):
         self.H = H
@@ -337,8 +209,7 @@ class PoiseuilleAnalytical:
             warnings.warn("yc >= H : seuil trop élevé, écoulement bloqué.")
 
     def velocity_profile(self, y: np.ndarray) -> np.ndarray:
-        """Profil exact : plug = u_plug pour |y| <= yc (correction du bug
-        v3-v7 : l'affectation du noyau rigide avait été supprimée)."""
+
         y = np.atleast_1d(np.abs(y)).astype(float)
         u = np.zeros_like(y)
         mask_fluid = y > self.yc
@@ -346,38 +217,13 @@ class PoiseuilleAnalytical:
         prefactor = (self.n / (self.n + 1.0)) * (self.G / self.K_eff) ** (1.0 / self.n)
         expo = (self.n + 1.0) / self.n
         u_plug = prefactor * (self.H - self.yc) ** expo
-        u[mask_rigid] = u_plug                               # <-- LA LIGNE RÉTABLIE
+        u[mask_rigid] = u_plug                             
         u[mask_fluid] = prefactor * ((self.H - self.yc) ** expo
                                      - (y[mask_fluid] - self.yc) ** expo)
         return u
 
 
 class PoiseuillePINN:
-    r"""
-    PINN 1D — Poiseuille HB x Arrhenius.  v7 (= v6 + FIX-14) :
-
-    [FIX-1]  BC dure : u = (1-(y/H)²)·u_scale·N(y/H) -> u(±H)=0 exact.
-    [FIX-2]  Clipping de gradient en phase Adam UNIQUEMENT.
-    [FIX-3]  LR Adam 5e-4 ; passes L-BFGS au raffinement final.
-    [FIX-8]  Résidu en FORME CONTRAINTE : R = [ mu_eff(|u_y|)·u_y + G·y ]/(G·H)
-             (dtau/dy = -G, tau(0)=0 par parité -> tau = -G·y exact).
-    [FIX-9]  float64.
-    [FIX-10] Auto-test : résidu de la solution exacte via le MÊME code.
-    [FIX-11] m_reg = 5e2 ; plug invariant ; impact régularisation négligeable.
-    [FIX-12] AUTO-POIDS DE COLLOCATION (EMA bornée, figés en L-BFGS).
-    [FIX-13] Homotopie tau0 DISPONIBLE (continuation=True) mais OFF par
-             défaut : le run v6 a montré des pertes de paliers croissantes —
-             le réseau gardait le profil sans plug et laissait dégrader le
-             résidu. La cause réelle était ailleurs (FIX-14).
-    [FIX-14] COLLOCATION RAFFINÉE À L'INTERFACE ±y_c : le saut 0 -> u_max
-             se cachait entre deux points de collocation (pas 0.005 m autour
-             de y_c = 0.094 m) et la perte est quasi aveugle à la constante
-             du plug (tau -> 0 quand gd -> 0). Grappes de 150 pts dans
-             ±20 mm autour de ±y_c -> la discontinuité devient coûteuse ;
-             la zone cisailée étant déjà exacte, l'unique minimum conforme
-             est la solution régularisée exacte. y_c provient des paramètres
-             d'ENTRÉE -> benchmark aveugle préservé.
-    """
 
     def __init__(self, H: float = 1.0, G: float = 1000.0, tau0: float = 50.0,
                  K: float = 10.0, n: float = 0.7, m_reg: float = 5.0e2,
@@ -399,12 +245,11 @@ class PoiseuillePINN:
             "cuda" if torch.cuda.is_available() else "cpu")
 
         self.hb = HerschelBulkleyPapanastasiou(tau0, K, n, m_reg)
-        self.tau0_target = float(tau0)              # cible (homotopie A/B)
+        self.tau0_target = float(tau0)             
         self.arrh = ArrheniusViscosity(mu0_arrh, Ea_arrh,
                                        PhysicalConstants.T_REF_ARRHENIUS,
                                        T_min=T_floor)
 
-        # Facteur d'Arrhenius isotherme — inclus dans l'analytique ET le résidu.
         self.mu_ratio = float(self.arrh.relative_viscosity(
             torch.tensor([[T_const]], dtype=torch.float32)).item())
         self.mu_ratio_t = torch.tensor(self.mu_ratio, dtype=self.dtype,
@@ -412,7 +257,6 @@ class PoiseuillePINN:
         self.analytical = PoiseuilleAnalytical(H, G, tau0, K, n,
                                                mu_ratio=self.mu_ratio)
 
-        # --- Vérification AMONT de la normalisation (traçabilité) ---
         u_max = float(np.max(self.analytical.velocity_profile(
             np.linspace(-H, H, 2001))))
         u_max_no_arrh = u_max * self.mu_ratio ** (1.0 / n)
@@ -423,7 +267,7 @@ class PoiseuillePINN:
               f"u_max(sans Arrhenius) = {u_max_no_arrh:.1f} m/s | "
               f"u_scale = {self.u_scale:.1f} m/s -> facteur Arrhenius ACTIF "
               f"dans u_scale (u_max divisé par {self.mu_ratio ** (1.0 / n):.2f})")
-        # Diagnostic de sensibilité [FIX-11] :
+
         sens0 = 0.5 * self.analytical.tau0_eff * m_reg
         print(f"[ÉTAPE 1] Rhéologie : tau0 = {tau0:.1f} Pa | m_reg = "
               f"{m_reg:.0e} | y_c = {self.analytical.yc:.6f} m (indép. de m) | "
@@ -438,18 +282,6 @@ class PoiseuillePINN:
         self.opt_adam = optim.Adam(self.net.parameters(), lr=adam_lr)
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             self.opt_adam, mode="min", factor=0.5, patience=300)
-
-        # ---------------------------------------------------------------
-        # [FIX-14] COLLOCATION RAFFINÉE À L'INTERFACE ±y_c (v7)
-        # Forensique v6 : y_c = 0.094015 m entre deux échantillons
-        # (0.090 / 0.095) ; le saut 0 -> u_max était invisible à la perte.
-        # Grappes locales : fenêtre ±20 mm, 150 pts par côté (pas 0.27 mm,
-        # ~x27 plus fin que la grille de base). y_c = f(paramètres) ->
-        # benchmark aveugle. La perte est aussi quasi aveugle à la
-        # CONSTANTE du plug (tau -> 0 quand gd -> 0) : une fois le saut
-        # échantillonné, l'unique minimum conforme à la zone cisailée
-        # (déjà exacte) est le plug relevé -> solution régularisée exacte.
-        # ---------------------------------------------------------------
         y_c_abs = float(self.analytical.yc)
         n_base = max(201, int(n_colloc))
         y_all = [torch.linspace(-H, H, n_base, dtype=self.dtype,
@@ -467,7 +299,7 @@ class PoiseuillePINN:
         self.y_bc = torch.tensor([[-H], [H]], dtype=self.dtype,
                                  device=self.device)
 
-        # [FIX-12] auto-poids de collocation (EMA bornée, figés en L-BFGS)
+
         self.point_w = torch.ones_like(self.y_f)
         self.w_ema = 0.5
         self.w_warmup = int(point_warmup)
@@ -479,13 +311,10 @@ class PoiseuillePINN:
         self._iter = 0
 
     def net_u(self, y: torch.Tensor) -> torch.Tensor:
-        """[FIX-1] BC dure : u = (1-s²)·u_scale·N(s), s = y/H ∈ [-1,1]."""
         s = y / self.H
         return (1.0 - s * s) * self.u_scale * self.net(s)
 
     def _mu_eff(self, u_y: torch.Tensor) -> torch.Tensor:
-        """mu_eff(gd) = mu_HB(gd, tau0 COURANT) x mu_ratio — même loi que
-        l'analytique cible (tau0 = cible hors homotopie A/B)."""
         gd = torch.abs(u_y) + 1e-12
         mu_hb = (self.hb.tau0 * (1.0 - torch.exp(-self.hb.m_reg * gd)) / gd
                  + self.hb.K * gd ** (self.hb.n - 1.0))
@@ -498,20 +327,13 @@ class PoiseuillePINN:
                                   create_graph=True)[0]
         tau = self._mu_eff(u_y) * u_y
         if self.residual_mode == "stress":
-            # [FIX-8] première intégrale : tau(y) = -G y exact (parité).
+   
             return (tau + self.G * y) / (self.G * self.H)
         flux_y = torch.autograd.grad(tau, y, grad_outputs=torch.ones_like(tau),
                                      create_graph=True)[0]
         return (flux_y + self.G) / self.G
 
     def verify_formulation(self, n: int = 4001) -> Dict[str, float]:
-        r"""
-        [FIX-10] Auto-test : résidu (forme courante) de la solution exacte
-        CIBLE via le MÊME code que le PINN (tau0 = cible). Attendu :
-        médiane zone fluide ~1e-15 ; max confiné dans la bande de
-        régularisation |y-y_c| <~ 1/m ; impact vitesse négligeable.
-        À appeler AVANT l'entraînement (tau0 = cible à ce moment).
-        """
         an = self.analytical
         y = torch.linspace(-self.H, self.H, n, dtype=self.dtype,
                            device=self.device).reshape(-1, 1)
@@ -547,13 +369,11 @@ class PoiseuillePINN:
 
     def loss_function(self) -> Tuple[torch.Tensor, Dict[str, float],
                                      torch.Tensor]:
-        # [FIX-12] résidus NON pondérés retournés pour la mise à jour des
-        # auto-poids ; perte PDE = moyenne pondérée normalisée par la
-        # moyenne des poids (échelle stable).
+
         res = self.pde_residual(self.y_f)
         loss_pde = (torch.mean(self.point_w * res ** 2)
                     / torch.mean(self.point_w))
-        # BC dure -> identiquement 0 ; conservé pour le log (preuve).
+
         loss_bc = torch.mean(self.net_u(self.y_bc) ** 2)
         total = loss_pde + 10.0 * loss_bc
         d = {"loss_total": float(total.item()),
@@ -573,13 +393,12 @@ class PoiseuillePINN:
             self.opt_adam.zero_grad()
             loss, d, res = self.loss_function()
             loss.backward()
-            # [FIX-2] Clipping : phase Adam UNIQUEMENT.
+
             torch.nn.utils.clip_grad_norm_(self.net.parameters(),
                                            max_norm=self.grad_clip)
             self.opt_adam.step()
             self.scheduler.step(d["loss_total"])
 
-            # [FIX-12] Mise à jour des auto-poids (hors graphe, après step).
             if epoch >= self.w_warmup and epoch % self.w_every == 0:
                 with torch.no_grad():
                     r2 = res.detach() ** 2
@@ -611,7 +430,7 @@ class PoiseuillePINN:
 
         def closure() -> torch.Tensor:
             opt.zero_grad()
-            loss, d, _ = self.loss_function()   # point_w figé : PAS d'update ici
+            loss, d, _ = self.loss_function()   
             loss.backward()
             self._iter += 1
             self.logger.log(self._iter, d)
@@ -625,11 +444,7 @@ class PoiseuillePINN:
     def train(self, adam_epochs: int = 6000, lbfgs_epochs: int = 500,
               lbfgs_passes: int = 3, continuation: bool = False,
               n_stages: int = 5) -> None:
-        r"""
-        v7 — entraînement direct sur la collocation raffinée [FIX-14]
-        (continuation=False par défaut). continuation=True relance
-        l'homotopie tau0 [FIX-13] pour comparaison A/B.
-        """
+
         t0 = time.time()
         if continuation:
             n_stages = max(2, int(n_stages))
@@ -658,14 +473,7 @@ class PoiseuillePINN:
         print(f"[ÉTAPE 1] Temps total d'entraînement : {time.time() - t0:.1f} s")
 
     def probe_solution(self) -> Dict[str, float]:
-        r"""
-        [FIX-14] SONDE de diagnostic — prédictions falsifiables.
-        Mode de défaillance v4-v6 attendu si non corrigé :
-            u_pred(0) ~ 0, saut ~90 m/s entre y = 0.090 et y = 0.095.
-        v7 attendu :
-            u_pred(0) ~ u_max (±0.5), saut max inter-échantillons < 2 m/s
-            (pas 0.5 mm).
-        """
+
         self.net.eval()
         with torch.no_grad():
             yg = torch.linspace(-self.H, self.H, 4001, dtype=self.dtype,
@@ -696,7 +504,6 @@ class PoiseuillePINN:
         return {"u_center": u0, "u_max_jump": du_max, "plug_resolved": ok}
 
     def evaluate(self, n_points: int = 500) -> Dict[str, object]:
-        """Métriques vs solution exacte : L2, R², RMSE, MAE, erreur max."""
         self.net.eval()
         with torch.no_grad():
             y = torch.linspace(-self.H, self.H, n_points, dtype=self.dtype,
@@ -718,7 +525,7 @@ class PoiseuillePINN:
                           "max_abs_err": max_err, "y": y_np,
                           "u_pred": u_pred, "u_exact": u_exact}
 
-        print("\n[MÉTRIQUES ÉTAPE 1]")                     # impression unique
+        print("\n[MÉTRIQUES ÉTAPE 1]")                   
         print(f"  Résidu (forme)          : {self.residual_mode} | "
               f"dtype {str(self.dtype).replace('torch.', '')} | "
               f"m_reg {self.hb.m_reg:.0e} | raffinement interface [FIX-14] | "
@@ -733,7 +540,6 @@ class PoiseuillePINN:
         return self.last_eval
 
     def plot_results(self, fname: str = "step1_poiseuille_validation") -> None:
-        """3 panneaux : (a) convergence, (b) profil, (c) erreur absolue."""
         if self.last_eval is None:
             self.evaluate()
         m = self.last_eval
@@ -792,41 +598,30 @@ class PoiseuillePINN:
             print(f"[INFO] Figure sauvegardée : {path}")
         plt.close(fig)
 
-
-# ==============================================================================
-# ÉTAPE 2 : DONNÉES SYNTHÉTIQUES ET PINN 2D — CHAMBRE MAGMATIQUE DE L'ETNA
-# (VALIDÉE PAR LES RUNS v3/v4/v5/v6 — INCHANGÉE)
-# ==============================================================================
-
 class EtnaDataPipeline:
-    r"""
-    Données synthétiques réalistes + géométrie.
-    Domaine : x ∈ [0, 6 km], y ∈ [0, 4 km] ; chambre (L/2, 0.65 H), R = 500 m.
-    [FIX-4] Rhéologie basalte alcalin étnéen : tau0 = 2 Pa, K = 25, n = 0.6,
-    m_reg = 1e3 (plateau tau0·m = 2e3 Pa.s ; mu_noyau ~ 7e3 Pa.s validé).
-    """
+
     def __init__(self, L: float = 6000.0, H: float = 4000.0):
         self.L, self.H = L, H
-        self.T_surface = 300.0            # K (surface)
-        self.T_chamber = 1373.0           # K (~1100 degC)
+        self.T_surface = 300.0            
+        self.T_chamber = 1373.0          
         self.chamber_x, self.chamber_y = 0.5 * L, 0.65 * H
-        self.chamber_radius = 500.0       # m
-        self.tau0 = 2.0                   # Pa    [FIX-4]
-        self.K = 25.0                     # Pa.s^n
-        self.n = 0.6                      # pseudoplasticité
-        self.m_reg = 1.0e3                # régularisation (plateau = tau0*m)
-        self.mu0_arrh = 80.0              # Pa.s
-        self.Ea = 180e3                   # J/mol
-        self.T_ref = 1373.0               # K
-        self.pressure_depth = 2500.0      # m
+        self.chamber_radius = 500.0       
+        self.tau0 = 2.0                 
+        self.K = 25.0                 
+        self.n = 0.6                   
+        self.m_reg = 1.0e3            
+        self.mu0_arrh = 80.0              
+        self.Ea = 180e3                 
+        self.T_ref = 1373.0               
+        self.pressure_depth = 2500.0      
         self.pressure_x = 0.5 * L
-        self.dP = 8.0e6                   # Pa
-        self.U_REF = 0.5                  # m/s
-        self.P_REF = 5.0e6                # Pa
-        self.THETA_REF = 750.0            # K
+        self.dP = 8.0e6                   
+        self.U_REF = 0.5                 
+        self.P_REF = 5.0e6              
+        self.THETA_REF = 750.0           
 
     def T_cond(self, y):
-        """Géotherme conductif : T(0)=T_chamber (base), T(H)=T_surface."""
+
         return self.T_surface + (self.T_chamber - self.T_surface) * (1.0 - y / self.H)
 
     def theta_target(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -864,12 +659,7 @@ class EtnaDataPipeline:
 
 
 class EtnaPINN2D:
-    r"""
-    PINN 2D couplé : (x, y) -> (u, v, p', theta) avec
-        T = T_cond(y) + theta ;  p = p_hydro + p'.
-    BC : no-slip fond/parois ; surface = ancres InSAR ; theta = 0
-    fond/surface ; jauge de pression (moyenne de p' nulle).
-    """
+  
     LOSS_KEYS = ["continuity", "momentum_x", "momentum_y", "energy",
                  "bc_velocity", "bc_temperature",
                  "data_insar", "data_temperature", "pressure_gauge"]
@@ -957,11 +747,7 @@ class EtnaPINN2D:
 
     def effective_viscosity(self, gamma_dot: torch.Tensor, T: torch.Tensor,
                             update_diag: bool = False) -> torch.Tensor:
-        r"""
-        Verrou physique : mu_eff = exp(clip(ln(mu_HB·mu_rel), ln 1e1, ln 1e6)).
-        Validé runs v3-v6 : clamp chambre 0.00 %, clamp domaine ~61 %
-        (croûte froide, attendu), mu_noyau ~7e3 Pa.s.
-        """
+        
         mu_hb = self.hb.effective_viscosity(gamma_dot)
         if self.learn_arrhenius and self.arrh_par is not None:
             _, Ea = self.arrh_par()
@@ -1141,8 +927,6 @@ class EtnaPINN2D:
         print(f"[ÉTAPE 2] Temps total d'entraînement : {time.time() - t0:.1f} s")
 
     def predict_with_fields(self, nx: int = 120, ny: int = 90) -> Dict[str, np.ndarray]:
-        """Champs (u, v, p', T) + grandeurs dérivées — même formulation torch
-        que l'entraînement (cohérence garantie)."""
         self.net.eval()
         x_1d = torch.linspace(0.0, self.pl.L, nx, device=self.device)
         y_1d = torch.linspace(0.0, self.pl.H, ny, device=self.device)
@@ -1171,20 +955,8 @@ class EtnaPINN2D:
                 "T": _np(T), "tau": _np(tau), "mu_eff": _np(mu_eff),
                 "gamma_dot": _np(gamma_dot)}
 
-
-# ==============================================================================
-# POST-TRAITEMENT : DÉCISION ÉRUCTIVE ET RAPPORT
-# ==============================================================================
-
 class EruptiveDecisionGrid:
-    r"""
-    Grille de décision éruptive (critères type INGV-Osservatorio Etneo) :
-        mu > 1e6 Pa.s  ET  p > 5e7 Pa  ->  EXPLOSIF (ALERTE ROUGE)
-        mu > 1e6 Pa.s  ET  p <= 5e7    ->  EXPLOSIF (risque élevé)
-        mu <= 1e6      ET  p > 5e7     ->  EFFUSIF/EXPLOSIF (risque modéré)
-        sinon                          ->  EFFUSIF (état stable, type étnéen)
-    Les seuils sont sérialisés dans le JSON (bloc "thresholds").
-    """
+
     def __init__(self, p_threshold: float = 5.0e7, mu_threshold: float = 1.0e6):
         self.p_threshold = float(p_threshold)
         self.mu_threshold = float(mu_threshold)
@@ -1226,8 +998,6 @@ class EruptiveDecisionGrid:
 def build_eruptive_report(pinn2: EtnaPINN2D, fields: Dict[str, np.ndarray],
                           final_loss: float,
                           path_json: str = "eruptive_decision.json") -> Dict:
-    """Statistiques de chambre (diagnostics régionaux), classification,
-    JSON + rapport console."""
     pl = pinn2.pl
     decider = EruptiveDecisionGrid()
     r_ch = np.sqrt((fields["X"] - pl.chamber_x) ** 2
@@ -1322,13 +1092,7 @@ def build_eruptive_report(pinn2: EtnaPINN2D, fields: Dict[str, np.ndarray],
     print(f"[INFO] Rapport sauvegardé : {path_json}")
     return report
 
-
-# ==============================================================================
-# VISUALISATION SCIENTIFIQUE
-# ==============================================================================
-
 class EtnaVisualizer:
-    """Figures de publication (labels anglais, sans titre), 600 DPI."""
 
     def __init__(self, pipeline: EtnaDataPipeline):
         self.pl = pipeline
@@ -1359,7 +1123,6 @@ class EtnaVisualizer:
             ax.set_ylim(Y.min(), Y.max())
             ax.set_autoscale_on(False)
 
-        # --- (a) Vitesses + isobares ---
         ax = axes[0, 0]
         speed = np.sqrt(u ** 2 + v ** 2)
         try:
@@ -1381,7 +1144,6 @@ class EtnaVisualizer:
                                       edgecolor="none"))
         _chamber(ax); _axes(ax); _panel_label(ax, "(a)")
 
-        # --- (b) Contrainte de cisaillement ---
         ax = axes[0, 1]
         vmin_t, vmax_t = _safe_log_bounds(tau, floor=1e-4)
         im = ax.pcolormesh(X, Y, tau, shading="gouraud", cmap="magma",
@@ -1396,7 +1158,6 @@ class EtnaVisualizer:
                 bbox=dict(facecolor="white", alpha=0.85, edgecolor="none"))
         _chamber(ax); _axes(ax); _panel_label(ax, "(b)")
 
-        # --- (c) Viscosité effective ---
         ax = axes[1, 0]
         vmin_m, vmax_m = _safe_log_bounds(mu_eff, floor=1.0)
         im = ax.pcolormesh(X, Y, mu_eff, shading="gouraud", cmap="viridis",
@@ -1412,7 +1173,6 @@ class EtnaVisualizer:
                 bbox=dict(facecolor="white", alpha=0.85, edgecolor="none"))
         _chamber(ax); _axes(ax); _panel_label(ax, "(c)")
 
-        # --- (d) Champ thermique ---
         ax = axes[1, 1]
         im = ax.pcolormesh(X, Y, T, shading="gouraud", cmap="inferno")
         cb = fig.colorbar(im, ax=ax, shrink=0.85, pad=0.02)
@@ -1459,11 +1219,6 @@ class EtnaVisualizer:
             print(f"[INFO] Figure sauvegardée : {path}")
         plt.close(fig)
 
-
-# ==============================================================================
-# PIPELINE PRINCIPAL
-# ==============================================================================
-
 def main() -> None:
     t_start = time.time()
     torch.manual_seed(CONFIG["seed"])
@@ -1473,14 +1228,13 @@ def main() -> None:
     sep = "=" * 78
     print(sep)
     print(" PINN — RHÉOLOGIE MAGMATIQUE : POISEUILLE (HB) -> CHAMBRE DE L'ETNA")
-    print(" v7 : forme contrainte | float64 | auto-test | BC dure | clip Adam |")
+    print(" app : forme contrainte | float64 | auto-test | BC dure | clip Adam |")
     print("      auto-poids [FIX-12] | RAFFINEMENT D'INTERFACE ±y_c [FIX-14]")
     print(sep)
     print(f"[INFO] Device PyTorch : {device} | Seed : {CONFIG['seed']}")
     print(f"[INFO] Plancher thermique Arrhenius : {CONFIG['T_floor_kelvin']:.0f} K "
           f"(900 K = variante pétrologique à assumer explicitement)")
-
-    # ============================ ÉTAPE 1 ====================================
+  
     print("\n" + sep)
     print(" ÉTAPE 1 — VALIDATION : POISEUILLE PLAN (HERSCHEL-BULKLEY + ARRHENIUS)")
     print(sep)
@@ -1494,23 +1248,19 @@ def main() -> None:
         residual_mode=cfg1["residual_mode"],
         m_reg=cfg1["m_reg"],
         dtype=torch.float64 if cfg1["float64"] else torch.float32)
-    # [FIX-10] Preuve de cohérence formulation/normalisation AVANT entraînement
     pinn1.verify_formulation()
     pinn1.train(adam_epochs=cfg1["adam_epochs"],
                 lbfgs_epochs=cfg1["lbfgs_epochs"],
                 lbfgs_passes=cfg1["lbfgs_passes"],
-                continuation=cfg1.get("continuation", False))   # [FIX-14] OFF
+                continuation=cfg1.get("continuation", False))  
     m1 = pinn1.evaluate()
-    pinn1.probe_solution()          # [FIX-14] diagnostic falsifiable du plug
+    pinn1.probe_solution()          
     pinn1.plot_results()
-    if m1["r2"] < 0.99:            # QC automatique
+    if m1["r2"] < 0.99:         
         warnings.warn(f"[QC ÉTAPE 1] R^2 = {m1['r2']:.4f} < 0.99 : "
                       "convergence insuffisante — vérifier la SONDE (plug "
                       "résolu ?), l'auto-test et le log de convergence.")
 
-    # ============================ ÉTAPE 2 ====================================
-    # Re-seed : l'Étape 1 ne doit pas décaler le flux RNG de l'Étape 2 ->
-    # reproductibilité des runs validés v3-v6.
     torch.manual_seed(CONFIG["seed"])
     np.random.seed(CONFIG["seed"])
 
@@ -1545,7 +1295,6 @@ def main() -> None:
     df.to_csv("etna_simulation_results.csv", index=False, float_format="%.6e")
     print("[INFO] Champs numériques exportés : etna_simulation_results.csv")
 
-    # ============================ BILAN FINAL ================================
     print("\n" + sep)
     print(" PIPELINE TERMINÉ AVEC SUCCÈS")
     print(f" Durée totale : {time.time() - t_start:.1f} s")
