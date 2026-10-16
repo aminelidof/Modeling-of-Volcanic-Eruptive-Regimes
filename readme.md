@@ -123,10 +123,10 @@ The pipeline generates `eruptive_decision.json`, structured as follows:
 If you use this code, data, or methodology in your research, please cite our paper:
 
 ```bibtex
-@article{Mohammed2026Etna,
-  title={Data-Driven Magmatic Transport and Eruptive Decision Assessment at Mount Etna},
-  author={Mohammed, [Last Name] and Asma, [Last Name] and Merwan, [Last Name] and Meriem, [Last Name]},
-  journal={[Journal Name]},
+@article{Mohammed El Amine Fodil 2026Etna,
+  title={Data-Driven Physics-Informed Modeling of Volcanic Eruptive Regimes: Insights from the Pernicana Fault Seismicity at Mount Etna},
+  author={Mohammed El Amine Fodil,  and Asma Khelassi Sefaoui, and Merwan Abdelbari, and Meriem Fodil},
+  journal={............},
   year={2026},
   note={Under Review}
 }
