@@ -1,13 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-make_step1_validation.py — Étape 1 seule (v7), export step1_validation_data.csv
-Configuration IDENTIQUE au run v7 validé (R² = 0.9981) : seed 42, BC dure,
-résidu forme contrainte, float64, collocation raffinée ±y_c, auto-poids EMA.
-Référence analytique CORRIGÉE (plug rétabli — bug v3-v7).
-Sorties : step1_validation_data.csv + step1_validation_profile.{png,pdf}
-Puis relancer total_results.py -> figures 13-14 -> SUMMARY : 14/14.
-"""
 import numpy as np
 import pandas as pd
 import torch
@@ -17,7 +7,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# ---------------- Configuration (identique à app_magma.py v7, bloc step1) ----
 SEED = 42
 H, G, TAU0, K, N_EXP, M_REG = 1.0, 1000.0, 50.0, 10.0, 0.7, 5.0e2
 MU0, EA, T_CONST, T_REF = 100.0, 50e3, 1200.0, 1373.0
@@ -31,7 +20,6 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.manual_seed(SEED)
 np.random.seed(SEED)
 
-# ---------------- Référence analytique CORRIGÉE (plug rétabli) ---------------
 mu_ratio = float(np.exp((EA / R_GAS) * (1.0 / T_CONST - 1.0 / T_REF)))
 tau0_eff, K_eff = mu_ratio * TAU0, mu_ratio * K
 yc = tau0_eff / G
@@ -45,12 +33,11 @@ def u_exact_np(y):
     pref = (N_EXP / (N_EXP + 1.0)) * (G / K_eff) ** (1.0 / N_EXP)
     expo = (N_EXP + 1.0) / N_EXP
     u_plug = pref * (H - yc) ** expo
-    u[mask_rigid] = u_plug                      # <-- LA LIGNE RÉTABLIE
+    u[mask_rigid] = u_plug                     
     u[mask_fluid] = pref * ((H - yc) ** expo
                             - (y[mask_fluid] - yc) ** expo)
     return u
 
-# ---------------- Réseau + PINN (v7) ------------------------------------------
 def make_net():
     layers = [1, 50, 50, 50, 50, 1]
     mods, acts = [], []
@@ -73,7 +60,7 @@ u_max = float(np.max(u_exact_np(np.linspace(-H, H, 2001))))
 u_scale = 1.2 * u_max
 print(f"[INFO] mu_ratio = {mu_ratio:.4f} | y_c = {yc:.6f} m | "
       f"u_max = {u_max:.2f} m/s | u_scale = {u_scale:.2f} m/s")
-# GUARD anti-régression (bug v3-v7) : la référence doit être > 0 dans le plug
+
 assert u_max > 0.5 * u_scale, "BUG DE RÉFÉRENCE : plug nul détecté !"
 print("[GUARD] référence analytique OK (plug > 0).")
 
@@ -99,15 +86,14 @@ def residual(y):
     u = net_u(y)
     u_y = torch.autograd.grad(u, y, torch.ones_like(u), create_graph=True)[0]
     tau = mu_eff(u_y) * u_y
-    return (tau + G * y) / (G * H)              # forme contrainte [FIX-8]
+    return (tau + G * y) / (G * H)            
 
 def loss_fn():
     res = residual(y_f)
     lp = torch.mean(point_w * res ** 2) / torch.mean(point_w)
-    lb = torch.mean(net_u(y_bc) ** 2)           # BC dure -> 0 exact
+    lb = torch.mean(net_u(y_bc) ** 2)          
     return lp + 10.0 * lb, res
 
-# ---------------- Entraînement ------------------------------------------------
 opt = optim.Adam(net.parameters(), lr=ADAM_LR)
 print(f"[INFO] Adam {ADAM_EPOCHS} it. | L-BFGS {LBFGS_PASSES} x {LBFGS_ITER} | "
       f"collocation {y_f.shape[0]} pts")
@@ -139,7 +125,6 @@ for p in range(LBFGS_PASSES):
     optL.step(closure)
     print(f"  L-BFGS passe {p + 1}/{LBFGS_PASSES} | loss {loss_fn()[0].item():.3e}")
 
-# ---------------- Évaluation + EXPORT CSV ------------------------------------
 with torch.no_grad():
     y = torch.linspace(-H, H, 500, dtype=DTYPE, device=DEVICE).reshape(-1, 1)
     u_pred = net_u(y).cpu().numpy().flatten()
@@ -159,7 +144,7 @@ pd.DataFrame({"y_m": y_np, "u_exact_m_s": u_ex, "u_pred_m_s": u_pred,
     "step1_validation_data.csv", index=False, float_format="%.8e")
 print("[OK] Exporté : step1_validation_data.csv")
 
-# Quick-look 2 panneaux (profil + erreur absolue)
+
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5))
 ax1.plot(y_np, u_ex, "k-", lw=2.5, label="Analytical solution")
 ax1.plot(y_np, u_pred, "r--", lw=2.0, label="PINN prediction")
