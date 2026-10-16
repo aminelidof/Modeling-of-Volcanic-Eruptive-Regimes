@@ -10,14 +10,14 @@ This repository contains the complete implementation, numerical simulations, and
 
 ## 📌 Authors & Affiliations
 
-* **Mohammed El Amine Fodil [Last Name]**<sup>1,2,*</sup> (Corresponding Author) — `[email]@gmail.com`
-* **Asma Khelassi Sefaoui [Last Name]**<sup>1</sup>
-* **Merwan Abdelbari [Last Name]**<sup>3</sup>
-* **Meriem Fodil [Last Name]**<sup>3</sup>
+* **Mohammed El Amine Fodil**<sup>1,2,*</sup> (Corresponding Author) — `fodilmedam@gmail.com`
+* **Asma Khelassi Sefaoui**<sup>1</sup>
+* **Merwan Abdelbari**<sup>3</sup>
+* **Meriem Fodil**<sup>3</sup>
 
-<sup>1</sup> *Department of Hydraulics, [Name] Maghnia University Centre, [City] Tlemcen – Algeria*  
-<sup>2</sup> *Laboratoire Ingénierie et Sciences Appliquées IScApp [Name], [University], [City],Tlemcen - Algeria*  
-<sup>3</sup> *Department of Mechanics, [University], [City] Chlef – Algeria*  
+<sup>1</sup> *Department of Hydraulics, Maghnia University Centre, Tlemcen – Algeria*  
+<sup>2</sup> *Laboratoire Ingénierie et Sciences Appliquées IScApp, Maghnia University Centre, Tlemcen - Algeria*  
+<sup>3</sup> *Department of Mechanics, Hassiba Ben Bouali University, Chlef – Algeria*  
 
 ---
 
