@@ -25,7 +25,7 @@ tau0_eff, K_eff = mu_ratio * TAU0, mu_ratio * K
 yc = tau0_eff / G
 
 def u_exact_np(y):
-    """Corrigé : u[mask_rigid] = u_plug (la ligne qui manquait en v3-v7)."""
+   
     y = np.atleast_1d(np.abs(y)).astype(float)
     u = np.zeros_like(y)
     mask_fluid = y > yc
