@@ -1,0 +1,59 @@
+{
+  "timestamp": "2026-09-20T15:03:13",
+  "site": "Mont Etna, Sicile, Italie",
+  "method": "PINN PyTorch - Navier-Stokes Boussinesq 2D + continuite + energie + Arrhenius/Herschel-Bulkley",
+  "arrhenius_parameters": {
+    "mu0_pa_s": 80.0,
+    "mu0_bounds_pa_s": [
+      10.0,
+      10000.0
+    ],
+    "Ea_J_per_mol": 180000.0,
+    "Ea_bounds_J_per_mol": [
+      50000.0,
+      350000.0
+    ],
+    "learnable": false
+  },
+  "physics_constraints": {
+    "mu_min_pa_s": 10.0,
+    "mu_max_pa_s": 1000000.0,
+    "mu_within_bounds": true,
+    "clamped_fraction_percent": 62.14814782142639,
+    "clamped_fraction_chamber_percent": 0.0,
+    "mu_raw_range_before_clip": [
+      3832.34130859375,
+      2858113564672.0
+    ],
+    "mu_eff_range_after_clip": [
+      3832.34130859375,
+      1000000.125
+    ]
+  },
+  "chamber_statistics": {
+    "mogi_overpressure_pa": 8000000.0,
+    "dynamic_pressure_mean_pa": 20438.46875,
+    "overpressure_total_pa": 8020438.46875,
+    "mu_mean_pa_s": 53126.28515625,
+    "mu_core_mean_pa_s": 6669.24267578125,
+    "T_mean_K": 1222.9912109375
+  },
+  "domain_statistics": {
+    "mu_mean_pa_s": 684598.625,
+    "tau_max_pa": 137.24160766601562,
+    "T_min_K": 299.5754699707031,
+    "T_max_K": 1373.9432373046875,
+    "v_max_m_s": 0.06357160955667496
+  },
+  "thresholds": {
+    "p_threshold_pa": 50000000.0,
+    "mu_threshold_pa_s": 1000000.0
+  },
+  "decision": {
+    "risk_class": "EFFUSIF",
+    "risk_level": "ÉTAT STABLE (type étnéen)",
+    "description": "État typique du Mont Etna : système basaltique alcalin à conduit ouvert, viscosité modérée (1e2-1e5 Pa.s) et surpression maîtrisée. Activité effusive de fond (coulées, fontaines de lave) sans transition explosive attendue.",
+    "recommendation": "Poursuite de la surveillance standard INGV-OE (sismique, GNSS, caméras thermiques, InSAR Sentinel-1)."
+  },
+  "final_training_loss": 28.691116333007812
+}
