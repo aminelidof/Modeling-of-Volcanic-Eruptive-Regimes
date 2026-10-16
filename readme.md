@@ -1,4 +1,4 @@
-# Data-Driven Modeling and Eruptive Decision Pipeline for Mount Etna
+# Data-Driven Physics-Informed Modeling of Volcanic Eruptive Regimes: Insights from the Pernicana Fault Seismicity at Mount Etna
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/)
@@ -10,14 +10,14 @@ This repository contains the complete implementation, numerical simulations, and
 
 ## 📌 Authors & Affiliations
 
-* **Mohammed [Last Name]**<sup>1,2,*</sup> (Corresponding Author) — `[email]@gmail.com`
-* **Asma [Last Name]**<sup>1</sup>
-* **Merwan [Last Name]**<sup>3</sup>
-* **Meriem [Last Name]**<sup>3</sup>
+* **Mohammed El Amine Fodil [Last Name]**<sup>1,2,*</sup> (Corresponding Author) — `[email]@gmail.com`
+* **Asma Khelassi Sefaoui [Last Name]**<sup>1</sup>
+* **Merwan Abdelbari [Last Name]**<sup>3</sup>
+* **Meriem Fodil [Last Name]**<sup>3</sup>
 
-<sup>1</sup> *Department of Hydraulics, [Name] University Centre, [City] – Algeria*  
-<sup>2</sup> *Laboratoire Ingénierie et [Name], [University], [City], Algeria*  
-<sup>3</sup> *Department of Mechanics, [University], [City] – Algeria*  
+<sup>1</sup> *Department of Hydraulics, [Name] Maghnia University Centre, [City] Tlemcen – Algeria*  
+<sup>2</sup> *Laboratoire Ingénierie et Sciences Appliquées IScApp [Name], [University], [City],Tlemcen - Algeria*  
+<sup>3</sup> *Department of Mechanics, [University], [City] Chlef – Algeria*  
 
 ---
 
