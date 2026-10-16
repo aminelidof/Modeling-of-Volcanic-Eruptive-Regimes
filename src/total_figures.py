@@ -1,41 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-================================================================================
-total_figures_v2.py — Génération des figures + AUDIT manuscrit <-> données
-================================================================================
-CORRESPONDANCE script <-> manuscrit (les Figures 1-2 = organigrammes, générées
-ailleurs — à corriger à la main : "166 Pa s" -> "1e6 Pa.s", "VISCOISTYLOCK",
-"toss", "1 gauges") :
-
-    fig03_convergence_poiseuille     -> Figure 3
-    fig04_axial_velocity_profile     -> Figure 4
-    fig05_training_history_2d        -> Figure 5   (9 termes + total = 10 courbes)
-    fig06_residual_distribution      -> Figure 6   ("x-momentum residual")
-    fig07_velocity_field             -> Figure 7
-    fig08_overpressure               -> Figure 8   (décomposition Mogi+dynamique)
-    fig09_thermal_field              -> Figure 9   (moyenne chambre calculée)
-    fig10_pointwise_error            -> Figure 10  (annotation = CSV, source unique)
-    fig11_viscosity_shear            -> Figure 11  (colorbar 1..6, core mu JSON)
-    fig12_shear_stress               -> Figure 12
-    fig13_correlation_matrix         -> Figure 13
-    fig14_overpressure_seismicity    -> Figure 14  (branche imprimée, 225 evts)
-    fig15_magnitude_distribution     -> Figure 15
-    fig16_depth_magnitude            -> Figure 16
-
-Entrées (même dossier) :
-    etna_simulation_results.csv            [obligatoire]
-    eruptive_decision.json                 [audit + annotations]
-    step1_validation_data.csv              [fig04/fig10 + audit Table 1]
-    train_log_step1.csv / train_log_step2.csv
-    etna_all_earthquakes_observations.csv  [fig14/15/16 ; fallback si absent]
-
-Exécution :  python total_figures_v2.py
-Sortie    :  ./resultats_individuels_q1/  (PNG + PDF @600 DPI)
-             + audit console : valeurs réelles vs manuscrit + liste Ctrl+F
-================================================================================
-"""
-
 import os
 import json
 import math
@@ -75,19 +37,15 @@ plt.rcParams.update({
 OUTPUT_DIR = "resultats_individuels_q1"
 CHAMBER_KM = {"x": 3.0, "y": 2.6, "r": 0.5}
 PERNICANA_KM = {"x": 3.5, "y": 3.8, "r": 0.7}
-TAU0_PA = 2.0                      # seuil HB Étape 2
-N_FALLBACK_EVENTS = 225            # = "225 catalogged events" du manuscrit §3.7
+TAU0_PA = 2.0                    
+N_FALLBACK_EVENTS = 225            
 
-# Benchmark Étape 1 (à AJOUTER dans la Table 3 du manuscrit — jamais déclaré !)
+
 STEP1_MU_RATIO = 1.8803
-STEP1_TAU0 = 50.0                  # Pa
-STEP1_G = 1000.0                   # Pa/m
-STEP1_YC = STEP1_MU_RATIO * STEP1_TAU0 / STEP1_G   # = 0.094 m (Fig 4)
+STEP1_TAU0 = 50.0                  
+STEP1_G = 1000.0                   
+STEP1_YC = STEP1_MU_RATIO * STEP1_TAU0 / STEP1_G   
 
-
-# ==============================================================================
-# UTILITAIRES
-# ==============================================================================
 
 def save_figure(fig, name):
     for fmt in ("png", "pdf"):
@@ -216,11 +174,6 @@ def plot_corr_heatmap(ax, corr, labels):
                         color="black", fontsize=10)
     ax.grid(False)
 
-
-# ==============================================================================
-# AUDIT MANUSCRIT <-> DONNEES  (source unique : JSON + CSV + logs)
-# ==============================================================================
-
 def manuscript_audit(decision_data, df_res, df_val, df_log1, df_log2):
 
     def jget(*keys, default=None):
@@ -235,8 +188,8 @@ def manuscript_audit(decision_data, df_res, df_val, df_log1, df_log2):
     print(" AUDIT MANUSCRIT <-> DONNEES")
     print("=" * 78)
 
-    A = {}   # valeurs réelles
-    # --- JSON ---
+    A = {}   
+-
     A["core_mu"]     = jget("chamber_statistics", "mu_core_mean_pa_s")
     A["mean_mu"]     = jget("chamber_statistics", "mu_mean_pa_s")
     A["p_tot"]       = jget("chamber_statistics", "overpressure_total_pa")
@@ -251,7 +204,6 @@ def manuscript_audit(decision_data, df_res, df_val, df_log1, df_log2):
     A["raw_max"]     = jget("physics_constraints",
                             "mu_raw_range_before_clip", default=[None, None])[1]
 
-    # --- CSV champs 2D ---
     sp = np.sqrt(df_res.u_m_s ** 2 + df_res.v_m_s ** 2)
     A["v_max_csv"] = float(sp.max())
     A["mu_min"]    = float(df_res.mu_eff_pa_s.min())
@@ -259,7 +211,6 @@ def manuscript_audit(decision_data, df_res, df_val, df_log1, df_log2):
     A["tau_max_csv"] = float(df_res.tau_pa.max())
     A["frac_hi"]   = float((df_res.mu_eff_pa_s >= 0.999e6).mean() * 100)
 
-    # --- Validation Étape 1 (Table 1) ---
     V = {}
     if df_val is not None:
         e  = df_val.abs_error_m_s.to_numpy(float)
@@ -274,8 +225,7 @@ def manuscript_audit(decision_data, df_res, df_val, df_log1, df_log2):
         V["center"] = float(up[ic])
         V["plug"]   = float(ux.max())
         A.update({f"v_{k}": v for k, v in V.items()})
-
-    # --- Logs ---
+        
     if df_log2 is not None:
         last = df_log2.sort_values("epoch").iloc[-1]
         A["loss2_fin"] = float(last.loss_total)
@@ -290,7 +240,6 @@ def manuscript_audit(decision_data, df_res, df_val, df_log1, df_log2):
         A["loss1_fin"]   = float(df_log1.loss_total.iloc[-1])
         A["loss1_niter"] = int(len(df_log1))
 
-    # --- Comparaison aux valeurs ACTUELLES du manuscrit ---
     CLAIMS = [
         ("Core viscosity        (6.75e3)  ", "core_mu",   6.75e3),
         ("Chamber-mean viscosity(5.23e4)  ", "mean_mu",   5.23e4),
@@ -334,7 +283,6 @@ def manuscript_audit(decision_data, df_res, df_val, df_log1, df_log2):
         flag = "[OK]  " if ok else "[!!]  "
         print(f"{label:38s} {fmt(claim):>12s} {fmt(act):>12s}  {flag}")
 
-    # --- Liste de corrections Ctrl+F pour le manuscrit ---
     print("\n" + "-" * 78)
     print(" CORRECTIONS DE TEXTE RECOMMANDEES (Ctrl+F dans le manuscrit)")
     print("-" * 78)
@@ -401,11 +349,6 @@ def manuscript_audit(decision_data, df_res, df_val, df_log1, df_log2):
           "Figure 13 (v-p' = +0.68).")
     print("=" * 78 + "\n")
 
-
-# ==============================================================================
-# PROGRAMME PRINCIPAL
-# ==============================================================================
-
 def main():
     print("=" * 70)
     print(" Q1 FIGURE GENERATION v2 — HARMONISEE MANUSCRIT — 600 DPI")
@@ -464,7 +407,6 @@ def main():
             d = d[k]
         return d
 
-    # ================= Fig 3 (manuscrit) : Convergence Étape 1 ================
     print("[fig03] Step-1 convergence (Poiseuille benchmark)")
     try:
         fig, ax = plt.subplots(figsize=(8, 6))
@@ -490,7 +432,6 @@ def main():
     except Exception:
         traceback.print_exc()
 
-    # ================= Fig 4 (manuscrit) : Profil u(y) validation =============
     print("[fig04] Axial velocity u(y) vs transverse position (validation)")
     try:
         if df_val is None:
@@ -511,7 +452,6 @@ def main():
     except Exception:
         traceback.print_exc()
 
-    # ============ Fig 5 (manuscrit) : Historique Étape 2 — 9 TERMES ===========
     print("[fig05] Step-2 training history (9 loss terms + total)")
     try:
         fig, ax = plt.subplots(figsize=(8.5, 6))
@@ -520,17 +460,17 @@ def main():
             ax.semilogy(ep, np.clip(df_log2["loss_total"].to_numpy(float),
                                     1e-16, None),
                         color="purple", lw=2.2, label="Total loss")
-            # *** CLES CORRIGEES = colonnes REELLES de train_log_step2.csv ***
+
             comp = {
                 "loss_continuity":       "Continuity PDE",
                 "loss_momentum_x":       r"Momentum $x$ PDE",
                 "loss_momentum_y":       r"Momentum $y$ PDE",
                 "loss_energy":           "Energy PDE",
                 "loss_bc_velocity":      "Velocity BC",
-                "loss_bc_temperature":   "Thermal BC",          # etait 'bc_thermal'
+                "loss_bc_temperature":   "Thermal BC",         
                 "loss_data_insar":       "InSAR misfit",
-                "loss_data_temperature": "Petrological (T) misfit",  # etait 'data_petro'
-                "loss_pressure_gauge":   "Pressure gauge",      # etait 'gauge_pressure'
+                "loss_data_temperature": "Petrological (T) misfit", 
+                "loss_pressure_gauge":   "Pressure gauge",   
             }
             missing = [k for k in comp if k not in df_log2.columns]
             if missing:
@@ -540,7 +480,7 @@ def main():
                 if key in df_log2.columns:
                     vals = np.clip(df_log2[key].to_numpy(float), 1e-16, None)
                     ax.semilogy(ep, vals, lw=1.0, alpha=0.8, label=lab)
-        ax.set_xlabel("Training iteration")            # '(Step 2)' RETIRE
+        ax.set_xlabel("Training iteration")           
         ax.set_ylabel("Loss (log scale)")
         ax.grid(True, which="both", linestyle="--", alpha=0.4)
         ax.legend(fontsize=7, ncol=2, frameon=True, loc="upper right")
@@ -549,7 +489,6 @@ def main():
     except Exception:
         traceback.print_exc()
 
-    # ============ Fig 6 (manuscrit) : Résidus — étiquette corrigée ============
     print("[fig06] Residual distribution (x-momentum)")
     try:
         fig, ax = plt.subplots(figsize=(8, 6))
@@ -558,7 +497,7 @@ def main():
         else:
             rng = np.random.default_rng(0)
             res = rng.normal(0.0, 0.08, 1000)
-        xlabel = r"$\log_{10}$ x-momentum residual $\mathcal{R}_{x}$"  # CORRIGE
+        xlabel = r"$\log_{10}$ x-momentum residual $\mathcal{R}_{x}$"  
         plot_hist(ax, res, color="teal", bins=30, xlabel=xlabel,
                   ylabel="Probability density", stat="density")
         fig.tight_layout()
@@ -566,7 +505,6 @@ def main():
     except Exception:
         traceback.print_exc()
 
-    # ================= Fig 7 (manuscrit) : Champ de vitesse ===================
     print("[fig07] Magma velocity field & flow vectors")
     try:
         fig, ax = plt.subplots(figsize=(9, 6))
@@ -586,7 +524,6 @@ def main():
     except Exception:
         traceback.print_exc()
 
-    # ============ Fig 8 (manuscrit) : Surpression — décomposition =============
     print("[fig08] Magmatic overpressure & isobars (Mogi + dynamic)")
     try:
         p = F["p_MPa"]
@@ -614,7 +551,6 @@ def main():
     except Exception:
         traceback.print_exc()
 
-    # ========= Fig 9 (manuscrit) : Thermique — moyenne chambre CALCULEE =======
     print("[fig09] 2D thermal field (chamber mean computed from data)")
     try:
         fig, ax = plt.subplots(figsize=(9, 6))
@@ -625,7 +561,7 @@ def main():
             cs = ax.contour(Xk, Yk, F["T"], levels=8, colors="white",
                             linewidths=0.6, alpha=0.55)
             ax.clabel(cs, inline=True, fontsize=7.5, fmt="%.0f")
-        # MOYENNE CHAMBRE calculee sur le masque (plus de '~1373 K' ambigu)
+
         mask_ch = (((Xk - CHAMBER_KM["x"]) ** 2 +
                     (Yk - CHAMBER_KM["y"]) ** 2) <= CHAMBER_KM["r"] ** 2)
         T_mean = (float(F["T"][mask_ch].mean())
@@ -639,7 +575,6 @@ def main():
     except Exception:
         traceback.print_exc()
 
-    # ====== Fig 10 (manuscrit) : Erreur absolue — annotation = CSV (source unique)
     print("[fig10] Pointwise absolute error (annotation = CSV, single source)")
     try:
         if df_val is None:
@@ -666,13 +601,12 @@ def main():
     except Exception:
         traceback.print_exc()
 
-    # ======== Fig 11 (manuscrit) : Viscosité — colorbar 1..6 + JSON ===========
     print("[fig11] Effective viscosity & shear rate (vmin=1, vmax=6)")
     try:
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
         log_mu = np.log10(np.clip(F["mu"], 1e-9, None))
-        # vmin/vmax figes sur la fenetre physique [1e1, 1e6] du manuscrit
+
         cf1 = ax1.contourf(Xk, Yk, log_mu, levels=30, cmap="cividis",
                            vmin=1.0, vmax=6.0)
         cb1 = fig.colorbar(cf1, ax=ax1, fraction=0.046, pad=0.04)
@@ -700,7 +634,6 @@ def main():
     except Exception:
         traceback.print_exc()
 
-    # ================= Fig 12 (manuscrit) : Contrainte ========================
     print("[fig12] Shear stress distribution (yield contour)")
     try:
         fig, ax = plt.subplots(figsize=(9, 6))
@@ -721,7 +654,6 @@ def main():
     except Exception:
         traceback.print_exc()
 
-    # ================= Fig 13 (manuscrit) : Matrice corrélation ===============
     print("[fig13] Multi-physics correlation matrix")
     try:
         corr_cols = ["u_m_s", "v_m_s", "p_prime_pa", "T_K", "tau_pa",
@@ -735,7 +667,6 @@ def main():
     except Exception:
         traceback.print_exc()
 
-    # ==== Fig 14 (manuscrit) : Sismicité — branche imprimée, fallback 225 =====
     print("[fig14] Overpressure & seismicity (obs/synthetic branch printed)")
     try:
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6),
@@ -768,8 +699,7 @@ def main():
             d = d[(d["x_utm"] > 1e3) & (d["y_utm"] > 1e3)]
             use_obs = len(d) > 0
         if use_obs:
-            # NOTE : normalisation min-max -> georeferencement approximatif.
-            # Pour une revue Q1 : remplacer par une ancre UTM fixe (centre chambre).
+
             xk = ((d["x_utm"] - d["x_utm"].min()) / 1000.0
                   + Xk.min()).to_numpy()
             yk = ((d["y_utm"] - d["y_utm"].min()) / 1000.0
@@ -808,7 +738,6 @@ def main():
     except Exception:
         traceback.print_exc()
 
-    # ================= Fig 15 (manuscrit) : Distribution magnitudes ===========
     print("[fig15] Earthquake magnitude distribution")
     try:
         fig, ax = plt.subplots(figsize=(8, 6))
@@ -834,7 +763,6 @@ def main():
     except Exception:
         traceback.print_exc()
 
-    # ================= Fig 16 (manuscrit) : Profondeur vs magnitude ===========
     print("[fig16] Hypocentral depth vs magnitude")
     try:
         fig, ax = plt.subplots(figsize=(8, 6))
@@ -867,7 +795,6 @@ def main():
     except Exception:
         traceback.print_exc()
 
-    # ============================ AUDIT FINAL =================================
     manuscript_audit(decision_data, df_res, df_val, df_log1, df_log2)
 
     print("=" * 70)
